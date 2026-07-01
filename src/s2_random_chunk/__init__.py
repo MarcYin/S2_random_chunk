@@ -4,9 +4,11 @@ from .chunks import AssetChunkInfo, ChunkWindow, inspect_remote_geotiff, select_
 from .config import RandomChunkRequest
 from .providers import ProviderConfig, get_provider
 from .sampler import fetch_random_chunks, fetch_random_chunks_for_request
+from .scaling import AssetScale
 
 __all__ = [
     "AssetChunkInfo",
+    "AssetScale",
     "ChunkWindow",
     "ProviderConfig",
     "RandomChunkRequest",

@@ -8,6 +8,7 @@ from .chunks import inspect_remote_geotiff, list_block_windows, select_random_wi
 from .config import RandomChunkRequest
 from .providers import get_provider
 from .reader import read_chunks_threaded
+from .scaling import scale_matrix
 from .stac import asset_href_matrix, search_s2_items
 from .xarray_output import build_dataset
 
@@ -25,6 +26,7 @@ def fetch_random_chunks(
     reference_asset: Optional[str] = None,
     band_index: int = 1,
     max_workers: int = 8,
+    scale_mode: str = "reflectance",
     allow_partial_edges: bool = False,
     masked: bool = False,
     fill_value: Optional[float] = None,
@@ -47,6 +49,7 @@ def fetch_random_chunks(
         reference_asset=reference_asset,
         band_index=band_index,
         max_workers=max_workers,
+        scale_mode=scale_mode,
         allow_partial_edges=allow_partial_edges,
         masked=masked,
         fill_value=fill_value,
@@ -91,9 +94,11 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
     )
 
     hrefs = asset_href_matrix(items, asset_keys)
+    scales = scale_matrix(items, asset_keys, provider, request.scale_mode)
     data = read_chunks_threaded(
         hrefs,
         chunks,
+        scales=scales,
         source_band_index=request.band_index,
         max_workers=request.max_workers,
         masked=request.masked,
@@ -106,6 +111,7 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
         items=items,
         asset_keys=asset_keys,
         asset_hrefs=hrefs,
+        scales=scales,
         chunks=chunks,
         chunk_info=chunk_info,
         provider=provider,

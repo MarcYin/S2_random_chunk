@@ -22,6 +22,7 @@ class RandomChunkRequest:
     reference_asset: Optional[str] = None
     band_index: int = 1
     max_workers: int = 8
+    scale_mode: str = "reflectance"
     allow_partial_edges: bool = False
     masked: bool = False
     fill_value: Optional[float] = None
@@ -45,3 +46,5 @@ class RandomChunkRequest:
             raise ValueError("band_index is 1-based and must be greater than zero")
         if self.cloud_cover is not None and not 0 <= self.cloud_cover <= 100:
             raise ValueError("cloud_cover must be between 0 and 100")
+        if self.scale_mode not in {"raw", "stac", "reflectance"}:
+            raise ValueError("scale_mode must be one of: raw, stac, reflectance")

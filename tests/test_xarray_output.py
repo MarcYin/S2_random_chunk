@@ -1,10 +1,12 @@
 import json
+import importlib.util
 
 import numpy as np
 
 from s2_random_chunk.chunks import AssetChunkInfo, ChunkWindow
 from s2_random_chunk.config import RandomChunkRequest
 from s2_random_chunk.providers import get_provider
+from s2_random_chunk.scaling import AssetScale
 from s2_random_chunk.xarray_output import build_dataset
 
 
@@ -15,6 +17,8 @@ def test_build_dataset_populates_time_chunk_and_item_metadata():
         "properties": {
             "datetime": "2024-06-30T21:38:21.424000Z",
             "eo:cloud_cover": 12.5,
+            "s2:processing_baseline": "05.10",
+            "earthsearch:boa_offset_applied": True,
             "mgrs:utm_zone": 6,
             "mgrs:latitude_band": "V",
             "mgrs:grid_square": "VN",
@@ -42,6 +46,12 @@ def test_build_dataset_populates_time_chunk_and_item_metadata():
         items=[item],
         asset_keys=("blue", "green"),
         asset_hrefs=[["https://example.com/blue.tif?sig=1", "https://example.com/green.tif"]],
+        scales=[
+            [
+                AssetScale("blue", scale=0.0001, offset=-0.1, nodata=0, units="reflectance", source="test", applied=True),
+                AssetScale("green", scale=0.0001, offset=-0.1, nodata=0, units="reflectance", source="test", applied=True),
+            ]
+        ],
         chunks=[ChunkWindow(0, 0, 4, 4)],
         chunk_info=chunk_info,
         provider=get_provider("element84"),
@@ -53,5 +63,13 @@ def test_build_dataset_populates_time_chunk_and_item_metadata():
     assert ds["asset_href"].values[0, 0] == "https://example.com/blue.tif"
     assert ds.coords["grid_code"].values[0] == "MGRS-6VVN"
     assert ds.coords["mgrs_tile"].values[0] == "06VVN"
+    assert ds.coords["projected_x"].values[0, 0, 0] == 500005.0
+    assert ds.coords["projected_y"].values[0, 0, 0] == 6999995.0
+    if importlib.util.find_spec("rasterio") is not None:
+        assert "longitude" in ds.coords
+        assert "latitude" in ds.coords
+    assert ds["scale"].values[0, 0] == 0.0001
+    assert ds["offset"].values[0, 0] == -0.1
+    assert ds["data"].attrs["scale_mode"] == "reflectance"
     assert ds.attrs["reference_block_shape"] == (4, 4)
     assert json.loads(ds.attrs["stac_items"])[0]["id"] == "S2A_6VVN_20240630_0_L2A"

@@ -11,6 +11,7 @@ import xarray as xr
 from .chunks import AssetChunkInfo, ChunkWindow, bounds_for_window
 from .config import RandomChunkRequest
 from .providers import ProviderConfig
+from .scaling import AssetScale, scale_metadata_for_attrs
 from .stac import item_collection_value, item_id_value, item_mgrs_tile, item_properties
 from .utils import item_datetime, strip_url_query
 
@@ -24,6 +25,8 @@ COMMON_PROPERTY_COORDS = (
     "mgrs:grid_square",
     "platform",
     "constellation",
+    "s2:processing_baseline",
+    "earthsearch:boa_offset_applied",
 )
 
 
@@ -32,6 +35,7 @@ def build_dataset(
     items: Sequence[Any],
     asset_keys: Sequence[str],
     asset_hrefs: Sequence[Sequence[str]],
+    scales: Sequence[Sequence[AssetScale]],
     chunks: Sequence[ChunkWindow],
     chunk_info: AssetChunkInfo,
     provider: ProviderConfig,
@@ -66,14 +70,29 @@ def build_dataset(
     }
 
     bounds = np.asarray([bounds_for_window(chunk_info.transform, chunk) for chunk in chunks])
+    projected_x, projected_y, longitude, latitude = coordinate_grids(
+        chunk_info.transform,
+        chunks,
+        data.shape[-2],
+        data.shape[-1],
+        chunk_info.crs,
+    )
     coords.update(
         {
             "chunk_left": ("chunk", bounds[:, 0]),
             "chunk_bottom": ("chunk", bounds[:, 1]),
             "chunk_right": ("chunk", bounds[:, 2]),
             "chunk_top": ("chunk", bounds[:, 3]),
+            "projected_x": (("chunk", "y", "x"), projected_x),
+            "projected_y": (("chunk", "y", "x"), projected_y),
         }
     )
+    if longitude is not None and latitude is not None:
+        coords["longitude"] = (("chunk", "y", "x"), longitude)
+        coords["latitude"] = (("chunk", "y", "x"), latitude)
+    coordinate_names = "projected_x projected_y"
+    if longitude is not None and latitude is not None:
+        coordinate_names += " longitude latitude"
 
     properties_by_item = [item_properties(item) for item in items]
     for key in COMMON_PROPERTY_COORDS:
@@ -95,6 +114,10 @@ def build_dataset(
                 {
                     "long_name": "Sampled Sentinel-2 asset pixels",
                     "source_band_index": request.band_index,
+                    "scale_mode": request.scale_mode,
+                    "units": data_units(scales),
+                    "grid_mapping": "spatial_ref",
+                    "coordinates": coordinate_names,
                     "nodata": chunk_info.nodata,
                 },
             ),
@@ -102,6 +125,25 @@ def build_dataset(
                 ("time", "band"),
                 np.asarray(sanitized_hrefs, dtype=object),
                 {"description": "Asset URLs with query strings removed"},
+            ),
+            "scale": (
+                ("time", "band"),
+                np.asarray([[scale.scale for scale in item_scales] for item_scales in scales]),
+                {"description": "Multiplicative scale applied to stored values"},
+            ),
+            "offset": (
+                ("time", "band"),
+                np.asarray([[scale.offset for scale in item_scales] for item_scales in scales]),
+                {"description": "Additive offset applied after scale"},
+            ),
+            "spatial_ref": (
+                (),
+                0,
+                {
+                    "crs": chunk_info.crs or "",
+                    "spatial_ref": chunk_info.crs or "",
+                    "GeoTransform": " ".join(str(value) for value in chunk_info.transform),
+                },
             ),
         },
         coords=coords,
@@ -116,6 +158,8 @@ def build_dataset(
             "n_chunks": request.n_chunks,
             "seed": request.seed if request.seed is not None else "",
             "reference_asset": reference_asset,
+            "scale_mode": request.scale_mode,
+            "scale_metadata": json.dumps(scale_metadata_for_attrs(scales)),
             "reference_block_shape": tuple(chunk_info.reference_block_shape),
             "reference_dtype": chunk_info.dtype,
             "reference_nodata": chunk_info.nodata if chunk_info.nodata is not None else "",
@@ -127,6 +171,61 @@ def build_dataset(
         },
     )
     return ds
+
+
+def coordinate_grids(
+    transform: Sequence[float],
+    chunks: Sequence[ChunkWindow],
+    height: int,
+    width: int,
+    crs: str,
+):
+    a, b, c, d, e, f = transform
+    projected_x = np.empty((len(chunks), height, width), dtype=np.float64)
+    projected_y = np.empty((len(chunks), height, width), dtype=np.float64)
+    row_template, col_template = np.meshgrid(
+        np.arange(height, dtype=np.float64) + 0.5,
+        np.arange(width, dtype=np.float64) + 0.5,
+        indexing="ij",
+    )
+    for chunk_index, chunk in enumerate(chunks):
+        rows = row_template + chunk.row_off
+        cols = col_template + chunk.col_off
+        projected_x[chunk_index] = c + cols * a + rows * b
+        projected_y[chunk_index] = f + cols * d + rows * e
+
+    longitude = None
+    latitude = None
+    if crs:
+        try:
+            from rasterio.warp import transform as warp_transform
+
+            lon, lat = warp_transform(
+                crs,
+                "EPSG:4326",
+                projected_x.reshape(-1).tolist(),
+                projected_y.reshape(-1).tolist(),
+            )
+            longitude = np.asarray(lon, dtype=np.float64).reshape(projected_x.shape)
+            latitude = np.asarray(lat, dtype=np.float64).reshape(projected_y.shape)
+        except Exception:
+            longitude = None
+            latitude = None
+    return projected_x, projected_y, longitude, latitude
+
+
+def data_units(scales: Sequence[Sequence[AssetScale]]) -> str:
+    units = {
+        scale.units
+        for item_scales in scales
+        for scale in item_scales
+        if scale.applied
+    }
+    if len(units) == 1:
+        return next(iter(units))
+    if units:
+        return "mixed"
+    return "digital_number"
 
 
 def _minimal_items(items: Sequence[Any], properties_by_item: Sequence[Mapping[str, Any]]):
