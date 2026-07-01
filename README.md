@@ -24,12 +24,23 @@ ds = fetch_random_chunks(
     seed=42,
     max_items=10,
     scale_mode="reflectance",    # default; use "raw" for unchanged DN values
+    target_resolution=10,        # optional; defaults to the reference asset's native resolution
 )
 
 print(ds)
 ```
 
-By default, Planetary Computer uses assets `B02`, `B03`, `B04`, `B08`; Earth Search uses `blue`, `green`, `red`, `nir`. Override with `assets=(...)` if you need a different band set.
+By default, Planetary Computer uses the 10 reflectance bands `B02`-`B08`, `B8A`, `B11`, `B12` plus the `SCL` scene classification band; Earth Search uses `blue`, `green`, `red`, `rededge1`, `rededge2`, `rededge3`, `nir`, `nir08`, `swir16`, `swir22`, `scl`. Override with `assets=(...)` if you need a different band set.
+
+## Mixed-resolution bands and `target_resolution`
+
+Sentinel-2 bands are natively stored at different spatial resolutions (10 m, 20 m, and 60 m). Pass `target_resolution` (in the asset CRS units, meters for Sentinel-2 UTM tiles) to resample every requested band onto one common output grid:
+
+- If `target_resolution` is finer (a smaller number) than an asset's native resolution, that asset is resampled with **nearest neighbour**.
+- If `target_resolution` is coarser (a larger number) than an asset's native resolution, that asset is resampled with **average** resampling.
+- If `target_resolution` is left unset, it defaults to the reference asset's native resolution (10 m for the default band lists), so mixing 10 m/20 m/60 m bands works out of the box.
+
+The resolved `reference_resolution_m` and `target_resolution_m` are recorded in `ds.attrs`.
 
 ## Output
 
@@ -43,7 +54,7 @@ By default, Planetary Computer uses assets `B02`, `B03`, `B04`, `B08`; Earth Sea
 - `scale(time, band)`, `offset(time, band)`, and serialized `scale_metadata` describing how stored values were converted.
 - sanitized STAC item metadata in `ds.attrs["stac_items"]`.
 
-The selected chunk windows are anchored to the first matching reference asset and reused across all times and requested bands. For Sentinel-2 assets on the same MGRS tile and resolution this gives a consistent local time-series tensor. If you mix assets with different resolutions, Rasterio will return different window sizes and the package will raise a shape error.
+The selected chunk windows are anchored to the first matching reference asset and reused across all times and requested bands. For Sentinel-2 assets on the same MGRS tile, all requested bands are resampled onto the `target_resolution` grid (defaulting to the reference asset's native resolution), so the default mixed-resolution 10/20/60 m band set produces one consistent local time-series tensor.
 
 ## Sentinel-2 scaling
 
