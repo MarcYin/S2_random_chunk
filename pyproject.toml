@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "s2-random-chunk"
+version = "0.1.0"
+description = "Random chunk-aware Sentinel-2 time-series sampling from STAC-hosted Cloud Optimized GeoTIFFs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "S2 Random Chunk contributors" }
+]
+dependencies = [
+  "numpy>=1.24",
+  "xarray>=2023.1",
+  "rasterio>=1.3",
+  "pystac-client>=0.7",
+  "planetary-computer>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
