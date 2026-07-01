@@ -101,6 +101,8 @@ def _output_shape(
     reference_resolution: float,
     target_resolution: float,
 ) -> Tuple[int, int]:
+    if reference_resolution <= 0 or target_resolution <= 0:
+        raise ValueError("reference_resolution and target_resolution must be greater than zero")
     ratio = reference_resolution / target_resolution
     height = max(1, round(chunk.height * ratio))
     width = max(1, round(chunk.width * ratio))

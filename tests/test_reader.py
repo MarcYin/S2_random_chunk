@@ -63,8 +63,8 @@ def test_read_chunks_threaded_resamples_mixed_resolution_bands():
         # 10 m band (native resolution == target) is read unchanged.
         assert np.array_equal(data[0, 0, 0], data10)
         # 20 m band is nearest-neighbour upsampled to the 10 m target grid.
-        assert np.array_equal(data[0, 0, 1, :2, :2], np.full((2, 2), data20[0, 0]))
-        assert np.array_equal(data[0, 0, 1, :2, 2:4], np.full((2, 2), data20[0, 1]))
+        expected20 = np.repeat(np.repeat(data20, 2, axis=0), 2, axis=1)
+        assert np.array_equal(data[0, 0, 1], expected20)
     finally:
         with rasterio.Env():
             for href in (href10, href20):

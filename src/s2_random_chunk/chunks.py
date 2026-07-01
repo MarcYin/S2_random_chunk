@@ -183,7 +183,9 @@ def chunk_transform(
     """
 
     a, b, c, d, e, f = transform
-    scale = target_resolution / reference_resolution if reference_resolution else 1.0
+    if reference_resolution <= 0 or target_resolution <= 0:
+        raise ValueError("reference_resolution and target_resolution must be greater than zero")
+    scale = target_resolution / reference_resolution
     origin_c = c + window.col_off * a + window.row_off * b
     origin_f = f + window.col_off * d + window.row_off * e
     return (a * scale, b * scale, origin_c, d * scale, e * scale, origin_f)
