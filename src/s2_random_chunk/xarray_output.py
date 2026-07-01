@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import xarray as xr
 
-from .chunks import AssetChunkInfo, ChunkWindow, bounds_for_window
+from .chunks import AssetChunkInfo, ChunkWindow, bounds_for_window, chunk_transform
 from .config import RandomChunkRequest
 from .providers import ProviderConfig
 from .scaling import AssetScale, scale_metadata_for_attrs
@@ -41,6 +41,8 @@ def build_dataset(
     provider: ProviderConfig,
     request: RandomChunkRequest,
     reference_asset: str,
+    reference_resolution: float,
+    target_resolution: float,
 ) -> xr.Dataset:
     """Create an xarray Dataset from sampled data and STAC metadata."""
 
@@ -76,6 +78,8 @@ def build_dataset(
         data.shape[-2],
         data.shape[-1],
         chunk_info.crs,
+        reference_resolution,
+        target_resolution,
     )
     coords.update(
         {
@@ -163,6 +167,8 @@ def build_dataset(
             "reference_block_shape": tuple(chunk_info.reference_block_shape),
             "reference_dtype": chunk_info.dtype,
             "reference_nodata": chunk_info.nodata if chunk_info.nodata is not None else "",
+            "reference_resolution_m": reference_resolution,
+            "target_resolution_m": target_resolution,
             "crs": chunk_info.crs or "",
             "transform": tuple(chunk_info.transform),
             "tiled": chunk_info.tiled,
@@ -179,8 +185,9 @@ def coordinate_grids(
     height: int,
     width: int,
     crs: str,
+    reference_resolution: float,
+    target_resolution: float,
 ):
-    a, b, c, d, e, f = transform
     projected_x = np.empty((len(chunks), height, width), dtype=np.float64)
     projected_y = np.empty((len(chunks), height, width), dtype=np.float64)
     row_template, col_template = np.meshgrid(
@@ -189,10 +196,9 @@ def coordinate_grids(
         indexing="ij",
     )
     for chunk_index, chunk in enumerate(chunks):
-        rows = row_template + chunk.row_off
-        cols = col_template + chunk.col_off
-        projected_x[chunk_index] = c + cols * a + rows * b
-        projected_y[chunk_index] = f + cols * d + rows * e
+        a, b, c, d, e, f = chunk_transform(transform, chunk, reference_resolution, target_resolution)
+        projected_x[chunk_index] = c + col_template * a + row_template * b
+        projected_y[chunk_index] = f + col_template * d + row_template * e
 
     longitude = None
     latitude = None

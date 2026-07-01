@@ -57,6 +57,8 @@ def test_build_dataset_populates_time_chunk_and_item_metadata():
         provider=get_provider("element84"),
         request=RandomChunkRequest("06VVN", "2024-06-01", "2024-06-30", source="element84"),
         reference_asset="blue",
+        reference_resolution=10.0,
+        target_resolution=10.0,
     )
 
     assert ds["data"].dims == ("time", "chunk", "band", "y", "x")

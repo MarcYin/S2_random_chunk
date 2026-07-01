@@ -5,7 +5,19 @@ def test_planetary_computer_provider_defaults():
     provider = get_provider("pc")
 
     assert provider.name == "planetary_computer"
-    assert provider.default_assets == ("B02", "B03", "B04", "B08")
+    assert provider.default_assets == (
+        "B02",
+        "B03",
+        "B04",
+        "B05",
+        "B06",
+        "B07",
+        "B08",
+        "B8A",
+        "B11",
+        "B12",
+        "SCL",
+    )
     assert provider.signs_assets is True
 
 

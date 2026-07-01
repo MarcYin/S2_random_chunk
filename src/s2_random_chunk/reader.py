@@ -8,7 +8,7 @@ from typing import Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .chunks import ChunkWindow, merged_gdal_env
+from .chunks import ChunkWindow, bounds_for_window, merged_gdal_env
 from .scaling import AssetScale
 
 
@@ -25,6 +25,9 @@ class AssetReadTask:
     masked: bool
     fill_value: Optional[float]
     gdal_env: Optional[Mapping[str, str]]
+    reference_transform: Optional[Tuple[float, float, float, float, float, float]] = None
+    reference_resolution: Optional[float] = None
+    target_resolution: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -37,24 +40,38 @@ class ReadResult:
 def read_asset_chunks(task: AssetReadTask) -> ReadResult:
     try:
         import rasterio
-        from rasterio.windows import Window
+        from rasterio.enums import Resampling
+        from rasterio.windows import Window, from_bounds
     except ImportError as exc:  # pragma: no cover - exercised when dependency is absent
         raise ImportError("rasterio is required to read remote GeoTIFF chunks") from exc
 
+    resample = task.target_resolution is not None
     arrays = []
     with rasterio.Env(**merged_gdal_env(task.gdal_env)):
         with rasterio.open(task.href, sharing=False) as src:
             nodata = task.scale.nodata if task.scale.nodata is not None else src.nodata
+            resampling = None
+            if resample:
+                native_resolution = max(abs(src.transform.a), abs(src.transform.e))
+                resampling = _resampling_for(native_resolution, task.target_resolution)
             for chunk in task.chunks:
-                rasterio_window = Window(
-                    col_off=chunk.col_off,
-                    row_off=chunk.row_off,
-                    width=chunk.width,
-                    height=chunk.height,
-                )
+                out_shape = None
+                if resample:
+                    bounds = bounds_for_window(task.reference_transform, chunk)
+                    rasterio_window = from_bounds(*bounds, transform=src.transform)
+                    out_shape = _output_shape(chunk, task.reference_resolution, task.target_resolution)
+                else:
+                    rasterio_window = Window(
+                        col_off=chunk.col_off,
+                        row_off=chunk.row_off,
+                        width=chunk.width,
+                        height=chunk.height,
+                    )
                 array = src.read(
                     task.source_band_index,
                     window=rasterio_window,
+                    out_shape=out_shape,
+                    resampling=resampling if resampling is not None else Resampling.nearest,
                     masked=task.masked or task.scale.applied,
                 )
                 arrays.append(_finalize_array(array, task.scale, nodata, task.fill_value, task.masked))
@@ -63,6 +80,31 @@ def read_asset_chunks(task: AssetReadTask) -> ReadResult:
         band_index=task.band_index,
         arrays=tuple(arrays),
     )
+
+
+def _resampling_for(native_resolution: float, target_resolution: float):
+    from rasterio.enums import Resampling
+
+    if target_resolution < native_resolution:
+        # Output pixels are finer than the source: nearest neighbour avoids
+        # inventing new interpolated values.
+        return Resampling.nearest
+    if target_resolution > native_resolution:
+        # Output pixels are coarser than the source: average downsamples
+        # multiple source pixels into one.
+        return Resampling.average
+    return Resampling.nearest
+
+
+def _output_shape(
+    chunk: ChunkWindow,
+    reference_resolution: float,
+    target_resolution: float,
+) -> Tuple[int, int]:
+    ratio = reference_resolution / target_resolution
+    height = max(1, round(chunk.height * ratio))
+    width = max(1, round(chunk.width * ratio))
+    return (height, width)
 
 
 def _finalize_array(
@@ -115,17 +157,32 @@ def read_chunks_threaded(
     masked: bool = False,
     fill_value: Optional[float] = None,
     gdal_env: Optional[Mapping[str, str]] = None,
+    reference_transform: Optional[Tuple[float, float, float, float, float, float]] = None,
+    reference_resolution: Optional[float] = None,
+    target_resolution: Optional[float] = None,
 ) -> np.ndarray:
     """Read all ``time x chunk x band`` windows with a thread pool.
 
     Work is grouped by ``time x band`` so each remote GeoTIFF is opened once
     and all sampled windows for that asset are read from the same GDAL dataset.
+
+    When ``target_resolution`` is provided, each chunk window is resolved from
+    its real-world bounds (using ``reference_transform``/``reference_resolution``)
+    against each asset's own grid, so assets with different native Sentinel-2
+    resolutions (10 m/20 m/60 m) are resampled to a common output grid. Nearest
+    neighbour resampling is used when ``target_resolution`` is finer than an
+    asset's native resolution, and average resampling is used when it is
+    coarser.
     """
 
     if not hrefs:
         raise ValueError("No asset hrefs were provided")
     if not chunks:
         raise ValueError("No chunks were provided")
+    if target_resolution is not None and (reference_transform is None or reference_resolution is None):
+        raise ValueError(
+            "reference_transform and reference_resolution are required when target_resolution is set"
+        )
 
     if scales is None:
         scales = tuple(
@@ -149,6 +206,9 @@ def read_chunks_threaded(
                     masked=masked,
                     fill_value=fill_value,
                     gdal_env=gdal_env,
+                    reference_transform=reference_transform,
+                    reference_resolution=reference_resolution,
+                    target_resolution=target_resolution,
                 )
             )
 
@@ -161,7 +221,10 @@ def read_chunks_threaded(
     if not results:
         raise ValueError("No read results were produced")
 
-    expected_shape = chunks[0].shape
+    if target_resolution is not None:
+        expected_shape = _output_shape(chunks[0], reference_resolution, target_resolution)
+    else:
+        expected_shape = chunks[0].shape
     for result in results:
         for chunk_index, array in enumerate(result.arrays):
             if array.shape != expected_shape:

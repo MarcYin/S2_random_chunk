@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping, Optional, Sequence
 
-from .chunks import inspect_remote_geotiff, list_block_windows, select_random_windows
+from .chunks import inspect_remote_geotiff, list_block_windows, pixel_size, select_random_windows
 from .config import RandomChunkRequest
 from .providers import get_provider
 from .reader import read_chunks_threaded
@@ -33,6 +33,7 @@ def fetch_random_chunks(
     stac_endpoint: Optional[str] = None,
     collection: Optional[str] = None,
     gdal_env: Optional[Mapping[str, str]] = None,
+    target_resolution: Optional[float] = None,
 ):
     """Fetch random chunk-aligned Sentinel-2 time-series data as an xarray Dataset."""
 
@@ -56,6 +57,7 @@ def fetch_random_chunks(
         stac_endpoint=stac_endpoint,
         collection=collection,
         gdal_env=gdal_env,
+        target_resolution=target_resolution,
     )
     return fetch_random_chunks_for_request(request)
 
@@ -95,6 +97,10 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
 
     hrefs = asset_href_matrix(items, asset_keys)
     scales = scale_matrix(items, asset_keys, provider, request.scale_mode)
+
+    reference_resolution = max(pixel_size(chunk_info.transform))
+    target_resolution = request.target_resolution or reference_resolution
+
     data = read_chunks_threaded(
         hrefs,
         chunks,
@@ -104,6 +110,9 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
         masked=request.masked,
         fill_value=request.fill_value,
         gdal_env=request.gdal_env,
+        reference_transform=chunk_info.transform,
+        reference_resolution=reference_resolution,
+        target_resolution=target_resolution,
     )
 
     return build_dataset(
@@ -117,4 +126,6 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
         provider=provider,
         request=request,
         reference_asset=reference_asset,
+        reference_resolution=reference_resolution,
+        target_resolution=target_resolution,
     )

@@ -162,6 +162,33 @@ def select_random_windows(
     return tuple(rng.sample(list(candidates), n_chunks))
 
 
+def pixel_size(transform: Sequence[float]) -> Tuple[float, float]:
+    """Return the ``(x_resolution, y_resolution)`` magnitudes for an affine transform."""
+
+    a, _b, _c, _d, e, _f = transform
+    return (abs(a), abs(e))
+
+
+def chunk_transform(
+    transform: Sequence[float],
+    window: ChunkWindow,
+    reference_resolution: float,
+    target_resolution: float,
+) -> Tuple[float, float, float, float, float, float]:
+    """Return an affine-like transform for ``window`` resampled to ``target_resolution``.
+
+    The chunk keeps its own top-left origin (derived from ``window``'s pixel
+    offsets in the reference asset's native grid) while pixel size is scaled
+    by ``target_resolution / reference_resolution``.
+    """
+
+    a, b, c, d, e, f = transform
+    scale = target_resolution / reference_resolution if reference_resolution else 1.0
+    origin_c = c + window.col_off * a + window.row_off * b
+    origin_f = f + window.col_off * d + window.row_off * e
+    return (a * scale, b * scale, origin_c, d * scale, e * scale, origin_f)
+
+
 def bounds_for_window(
     transform: Sequence[float],
     window: ChunkWindow,

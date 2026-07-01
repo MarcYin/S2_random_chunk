@@ -29,6 +29,7 @@ class RandomChunkRequest:
     stac_endpoint: Optional[str] = None
     collection: Optional[str] = None
     gdal_env: Optional[Mapping[str, str]] = None
+    target_resolution: Optional[float] = None
 
     def asset_tuple(self, default_assets: Sequence[str]) -> Tuple[str, ...]:
         assets = self.assets if self.assets is not None else default_assets
@@ -48,3 +49,5 @@ class RandomChunkRequest:
             raise ValueError("cloud_cover must be between 0 and 100")
         if self.scale_mode not in {"raw", "stac", "reflectance"}:
             raise ValueError("scale_mode must be one of: raw, stac, reflectance")
+        if self.target_resolution is not None and self.target_resolution <= 0:
+            raise ValueError("target_resolution must be greater than zero")
