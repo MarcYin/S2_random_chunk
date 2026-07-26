@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import os
 from typing import Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -150,6 +151,29 @@ def _finalize_array(
     return np.asarray(array)
 
 
+def estimate_read_bytes(hrefs, chunks, block_shape=None, itemsize: int = 4) -> int:
+    """Bytes a single read_chunks_threaded call will allocate.
+
+    The array is (time x chunk x band x y x x), so cost grows LINEARLY with the number of
+    chunks requested. Reading many windows in one call is the single most common way to
+    OOM this package: ~200 scenes x 16 chunks x 11 bands x 1024^2 x 4B is ~150 GB. Callers
+    that want many windows should read them in batches (see `chunk_batch` in
+    fetch_random_chunks) rather than asking for them all at once.
+    """
+    n_time = len(hrefs)
+    n_band = len(hrefs[0]) if n_time else 0
+    n_chunk = len(chunks)
+    if block_shape is not None:
+        px = int(block_shape[0]) * int(block_shape[1])
+    else:
+        w = chunks[0] if n_chunk else None
+        px = int(getattr(w, "height", 1024)) * int(getattr(w, "width", 1024)) if w is not None else 1024 * 1024
+    return n_time * n_chunk * n_band * px * int(itemsize)
+
+
+READ_WARN_BYTES = int(os.environ.get("S2_CHUNK_READ_WARN_BYTES") or 32 * 1024 ** 3)
+
+
 def read_chunks_threaded(
     hrefs: Sequence[Sequence[str]],
     chunks: Sequence[ChunkWindow],
@@ -162,8 +186,12 @@ def read_chunks_threaded(
     reference_transform: Optional[Tuple[float, float, float, float, float, float]] = None,
     reference_resolution: Optional[float] = None,
     target_resolution: Optional[float] = None,
-) -> np.ndarray:
+    on_error: str = "raise",
+):
     """Read all ``time x chunk x band`` windows with a thread pool.
+
+    NOTE: this allocates the FULL (time x chunk x band x y x x) array. Cost is linear in
+    ``len(chunks)``; request many windows in batches, not in one call.
 
     Work is grouped by ``time x band`` so each remote GeoTIFF is opened once
     and all sampled windows for that asset are read from the same GDAL dataset.
@@ -175,6 +203,13 @@ def read_chunks_threaded(
     neighbour resampling is used when ``target_resolution`` is finer than an
     asset's native resolution, and average resampling is used when it is
     coarser.
+
+    ``on_error='drop'`` degrades gracefully when a remote asset is unreadable
+    (corrupt archive granule, expired signed URL): every time index with at
+    least one failed band is dropped, a warning names the failure, and the
+    return value becomes ``(data, kept_time_indices)`` so the caller can subset
+    its item list to match. The default ``'raise'`` keeps the original
+    fail-fast behaviour and plain ``data`` return.
     """
 
     if not hrefs:
@@ -215,10 +250,24 @@ def read_chunks_threaded(
             )
 
     results = []
+    failed_times = set()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {executor.submit(read_asset_chunks, task): task for task in tasks}
         for future in as_completed(future_map):
-            results.append(future.result())
+            task = future_map[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                if on_error != "drop":
+                    raise
+                import sys
+                print(f"[read_chunks_threaded] WARN: dropping time_index="
+                      f"{task.time_index} — band {task.band_index} unreadable: {exc}",
+                      file=sys.stderr, flush=True)
+                failed_times.add(task.time_index)
+
+    if failed_times:
+        results = [r for r in results if r.time_index not in failed_times]
 
     if not results:
         raise ValueError("No read results were produced")
@@ -237,10 +286,12 @@ def read_chunks_threaded(
                     f"chunk={chunk_index}, band={result.band_index}."
                 )
 
+    kept_times = [t for t in range(len(hrefs)) if t not in failed_times]
+    remap = {t: i for i, t in enumerate(kept_times)}
     dtype = np.result_type(*(array.dtype for result in results for array in result.arrays))
     data = np.empty(
         (
-            len(hrefs),
+            len(kept_times),
             len(chunks),
             len(hrefs[0]),
             expected_shape[0],
@@ -250,5 +301,7 @@ def read_chunks_threaded(
     )
     for result in results:
         for chunk_index, array in enumerate(result.arrays):
-            data[result.time_index, chunk_index, result.band_index, :, :] = array
+            data[remap[result.time_index], chunk_index, result.band_index, :, :] = array
+    if on_error == "drop":
+        return data, kept_times
     return data

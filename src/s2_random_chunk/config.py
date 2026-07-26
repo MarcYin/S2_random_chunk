@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class RandomChunkRequest:
     source: str = "planetary_computer"
     assets: Optional[Sequence[str]] = None
     n_chunks: int = 5
+    chunk_batch: int = 0   # >0: stream this many windows per read (bounds peak memory)
     seed: Optional[int] = None
     max_items: Optional[int] = None
     cloud_cover: Optional[float] = None
@@ -30,6 +31,13 @@ class RandomChunkRequest:
     collection: Optional[str] = None
     gdal_env: Optional[Mapping[str, str]] = None
     target_resolution: Optional[float] = None
+    # Optional hook to choose block windows: selector(windows, chunk_info) -> windows.
+    # When set it replaces the default random selection (used for crop-dense sampling).
+    windows_selector: Optional[Callable] = None
+    # Optional pre-queried STAC items. When set, the internal STAC search is SKIPPED and these items are
+    # used directly — lets a caller query once (with retry) and reuse across many fetches, avoiding
+    # repeated Planetary Computer STAC queries (which are intermittently slow/timeout).
+    items: Optional[Sequence[Any]] = None
 
     def asset_tuple(self, default_assets: Sequence[str]) -> Tuple[str, ...]:
         assets = self.assets if self.assets is not None else default_assets

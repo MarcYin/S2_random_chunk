@@ -34,6 +34,8 @@ def fetch_random_chunks(
     collection: Optional[str] = None,
     gdal_env: Optional[Mapping[str, str]] = None,
     target_resolution: Optional[float] = None,
+    windows_selector=None,
+    items=None,
 ):
     """Fetch random chunk-aligned Sentinel-2 time-series data as an xarray Dataset."""
 
@@ -58,6 +60,8 @@ def fetch_random_chunks(
         collection=collection,
         gdal_env=gdal_env,
         target_resolution=target_resolution,
+        windows_selector=windows_selector,
+        items=items,
     )
     return fetch_random_chunks_for_request(request)
 
@@ -70,7 +74,7 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
     asset_keys = request.asset_tuple(provider.default_assets)
     reference_asset = request.reference_asset or provider.reference_asset
 
-    items = search_s2_items(request, provider)
+    items = list(request.items) if request.items is not None else search_s2_items(request, provider)
     if not items:
         raise ValueError(
             "No Sentinel-2 items matched the requested MGRS tile/date range/provider filters"
@@ -87,13 +91,18 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
         band_index=request.band_index,
         gdal_env=request.gdal_env,
     )
-    chunks = select_random_windows(
-        windows,
-        n_chunks=request.n_chunks,
-        seed=request.seed,
-        full_shape=chunk_info.reference_block_shape,
-        allow_partial_edges=request.allow_partial_edges,
-    )
+    if request.windows_selector is not None:
+        chunks = tuple(request.windows_selector(windows, chunk_info))
+        if not chunks:
+            raise ValueError("windows_selector returned no chunk windows")
+    else:
+        chunks = select_random_windows(
+            windows,
+            n_chunks=request.n_chunks,
+            seed=request.seed,
+            full_shape=chunk_info.reference_block_shape,
+            allow_partial_edges=request.allow_partial_edges,
+        )
 
     hrefs = asset_href_matrix(items, asset_keys)
     scales = scale_matrix(items, asset_keys, provider, request.scale_mode)
@@ -101,31 +110,42 @@ def fetch_random_chunks_for_request(request: RandomChunkRequest):
     reference_resolution = max(pixel_size(chunk_info.transform))
     target_resolution = request.target_resolution or reference_resolution
 
-    data = read_chunks_threaded(
-        hrefs,
-        chunks,
-        scales=scales,
-        source_band_index=request.band_index,
-        max_workers=request.max_workers,
-        masked=request.masked,
-        fill_value=request.fill_value,
-        gdal_env=request.gdal_env,
-        reference_transform=chunk_info.transform,
-        reference_resolution=reference_resolution,
-        target_resolution=target_resolution,
-    )
+    def _read_build(chunk_subset):
+        data = read_chunks_threaded(
+            hrefs,
+            chunk_subset,
+            scales=scales,
+            source_band_index=request.band_index,
+            max_workers=request.max_workers,
+            masked=request.masked,
+            fill_value=request.fill_value,
+            gdal_env=request.gdal_env,
+            reference_transform=chunk_info.transform,
+            reference_resolution=reference_resolution,
+            target_resolution=target_resolution,
+        )
+        return build_dataset(
+            data=data,
+            items=items,
+            asset_keys=asset_keys,
+            asset_hrefs=hrefs,
+            scales=scales,
+            chunks=chunk_subset,
+            chunk_info=chunk_info,
+            provider=provider,
+            request=request,
+            reference_asset=reference_asset,
+            reference_resolution=reference_resolution,
+            target_resolution=target_resolution,
+        )
 
-    return build_dataset(
-        data=data,
-        items=items,
-        asset_keys=asset_keys,
-        asset_hrefs=hrefs,
-        scales=scales,
-        chunks=chunks,
-        chunk_info=chunk_info,
-        provider=provider,
-        request=request,
-        reference_asset=reference_asset,
-        reference_resolution=reference_resolution,
-        target_resolution=target_resolution,
-    )
+    # Reading every window at once allocates time x chunk x band x block_px x 4B, which is
+    # linear in n_chunks and is what OOM-kills large fetches. chunk_batch>0 yields one
+    # bounded dataset per batch instead, so peak memory is set by the batch, not n_chunks.
+    batch = int(getattr(request, "chunk_batch", 0) or 0)
+    if batch and batch < len(chunks):
+        def _stream():
+            for i in range(0, len(chunks), batch):
+                yield _read_build(chunks[i:i + batch])
+        return _stream()
+    return _read_build(chunks)
