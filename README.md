@@ -60,7 +60,11 @@ The selected chunk windows are anchored to the first matching reference asset an
 
 The default `scale_mode="reflectance"` applies scale/offset before data are returned:
 
-- Earth Search/Element84: uses each asset's STAC `raster:bands.scale`, `raster:bands.offset`, and `nodata` metadata.
+- Earth Search/Element84: uses each asset's STAC scale and nodata metadata. In
+  `reflectance` mode, common-name optical COG assets with
+  `earthsearch:boa_offset_applied=true` use scale only because the post-PB04
+  BOA shift is already present in the stored pixels. `stac` mode remains a
+  literal application of the advertised STAC scale and offset.
 - Planetary Computer: reads signed `product-metadata` XML and applies `BOA_ADD_OFFSET / BOA_QUANTIFICATION_VALUE` for optical bands. If XML cannot be read, it falls back to `scale=0.0001` and `offset=-0.1` for processing baselines `>= 04.00`, otherwise `offset=0`.
 - `scale_mode="stac"` applies only STAC Raster metadata and does not use Planetary Computer XML fallbacks.
 - `scale_mode="raw"` returns unchanged stored DN values.

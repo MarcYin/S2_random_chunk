@@ -44,6 +44,7 @@ COMMON_NAME_TO_S2_BAND = {
 }
 
 VALID_SCALE_MODES = {"raw", "stac", "reflectance"}
+REFLECTANCE_CONTRACT_VERSION = "s2-l2a-provider-aware-reflectance-v2"
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,23 @@ def asset_scale_for_item(
         scale = float(raster.get("scale", 1.0))
         offset = float(raster.get("offset", 0.0))
         nodata = _optional_float(raster.get("nodata"))
+        source = "stac:raster:bands"
+        # Earth Search's common-name COG assets are harmonised when this item
+        # flag is true: post-PB04 pixels have already been shifted by -1000 DN.
+        # Their raster metadata still advertises the original BOA offset, so
+        # applying it in reflectance mode would subtract 0.1 a second time.
+        #
+        # Keep scale_mode="stac" literal for callers explicitly requesting raw
+        # STAC metadata semantics.  The provider-aware correction belongs to
+        # scale_mode="reflectance", which promises physical reflectance.
+        if (
+            scale_mode == "reflectance"
+            and provider.name == "element84"
+            and is_s2_optical_asset(asset_key)
+            and earthsearch_boa_offset_applied(item)
+        ):
+            offset = 0.0
+            source = "element84:boa-offset-already-applied"
         units = "reflectance" if scale != 1.0 or offset != 0.0 else "dn"
         return AssetScale(
             asset_key=asset_key,
@@ -104,7 +122,7 @@ def asset_scale_for_item(
             offset=offset,
             nodata=nodata,
             units=units,
-            source="stac:raster:bands",
+            source=source,
             applied=scale_mode in {"stac", "reflectance"} and (scale != 1.0 or offset != 0.0),
         )
 
@@ -184,6 +202,15 @@ def processing_baseline(item: Any) -> Optional[float]:
         return float(str(value))
     except ValueError:
         return None
+
+
+def earthsearch_boa_offset_applied(item: Any) -> bool:
+    """Whether an Earth Search COG already contains the PB04 BOA shift."""
+
+    value = item_properties(item).get("earthsearch:boa_offset_applied")
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
 
 
 def is_s2_optical_asset(asset_key: str) -> bool:

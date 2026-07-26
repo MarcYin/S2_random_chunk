@@ -48,8 +48,8 @@ def test_build_dataset_populates_time_chunk_and_item_metadata():
         asset_hrefs=[["https://example.com/blue.tif?sig=1", "https://example.com/green.tif"]],
         scales=[
             [
-                AssetScale("blue", scale=0.0001, offset=-0.1, nodata=0, units="reflectance", source="test", applied=True),
-                AssetScale("green", scale=0.0001, offset=-0.1, nodata=0, units="reflectance", source="test", applied=True),
+                AssetScale("blue", scale=0.0001, offset=0.0, nodata=0, units="reflectance", source="test", applied=True),
+                AssetScale("green", scale=0.0001, offset=0.0, nodata=0, units="reflectance", source="test", applied=True),
             ]
         ],
         chunks=[ChunkWindow(0, 0, 4, 4)],
@@ -71,7 +71,8 @@ def test_build_dataset_populates_time_chunk_and_item_metadata():
         assert "longitude" in ds.coords
         assert "latitude" in ds.coords
     assert ds["scale"].values[0, 0] == 0.0001
-    assert ds["offset"].values[0, 0] == -0.1
+    assert ds["offset"].values[0, 0] == 0.0
     assert ds["data"].attrs["scale_mode"] == "reflectance"
+    assert ds.attrs["reflectance_contract"] == "s2-l2a-provider-aware-reflectance-v2"
     assert ds.attrs["reference_block_shape"] == (4, 4)
     assert json.loads(ds.attrs["stac_items"])[0]["id"] == "S2A_6VVN_20240630_0_L2A"

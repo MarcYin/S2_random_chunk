@@ -4,7 +4,31 @@ from s2_random_chunk.providers import get_provider
 from s2_random_chunk.scaling import asset_scale_for_item, s2_band_id
 
 
-def test_earth_search_uses_stac_raster_scale_and_offset():
+def test_earth_search_harmonised_cog_does_not_apply_boa_offset_twice():
+    item = {
+        "id": "S2A_6VVN_20240630_0_L2A",
+        "properties": {
+            "s2:processing_baseline": "05.10",
+            "earthsearch:boa_offset_applied": True,
+        },
+        "assets": {
+            "red": {
+                "href": "https://example.com/B04.tif",
+                "raster:bands": [{"scale": 0.0001, "offset": -0.1, "nodata": 0}],
+            }
+        },
+    }
+
+    scale = asset_scale_for_item(item, "red", get_provider("element84"))
+
+    assert scale.scale == pytest.approx(0.0001)
+    assert scale.offset == pytest.approx(0.0)
+    assert scale.nodata == 0
+    assert scale.source == "element84:boa-offset-already-applied"
+    assert scale.applied is True
+
+
+def test_earth_search_without_harmonisation_flag_uses_stac_offset():
     item = {
         "id": "S2A_6VVN_20240630_0_L2A",
         "properties": {"s2:processing_baseline": "05.10"},
@@ -20,9 +44,7 @@ def test_earth_search_uses_stac_raster_scale_and_offset():
 
     assert scale.scale == pytest.approx(0.0001)
     assert scale.offset == pytest.approx(-0.1)
-    assert scale.nodata == 0
     assert scale.source == "stac:raster:bands"
-    assert scale.applied is True
 
 
 def test_planetary_computer_falls_back_to_processing_baseline_when_xml_is_unavailable():
@@ -62,6 +84,7 @@ def test_raw_scale_mode_does_not_apply_scale():
 def test_stac_scale_mode_applies_stac_metadata_without_provider_fallbacks():
     item = {
         "id": "S2A_6VVN_20240630_0_L2A",
+        "properties": {"earthsearch:boa_offset_applied": True},
         "assets": {
             "red": {
                 "href": "https://example.com/B04.tif",

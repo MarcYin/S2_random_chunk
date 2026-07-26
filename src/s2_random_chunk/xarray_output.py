@@ -11,7 +11,11 @@ import xarray as xr
 from .chunks import AssetChunkInfo, ChunkWindow, bounds_for_window, chunk_transform
 from .config import RandomChunkRequest
 from .providers import ProviderConfig
-from .scaling import AssetScale, scale_metadata_for_attrs
+from .scaling import (
+    REFLECTANCE_CONTRACT_VERSION,
+    AssetScale,
+    scale_metadata_for_attrs,
+)
 from .stac import item_collection_value, item_id_value, item_mgrs_tile, item_properties
 from .utils import item_datetime, strip_url_query
 
@@ -163,6 +167,7 @@ def build_dataset(
             "seed": request.seed if request.seed is not None else "",
             "reference_asset": reference_asset,
             "scale_mode": request.scale_mode,
+            "reflectance_contract": REFLECTANCE_CONTRACT_VERSION,
             "scale_metadata": json.dumps(scale_metadata_for_attrs(scales)),
             "reference_block_shape": tuple(chunk_info.reference_block_shape),
             "reference_dtype": chunk_info.dtype,
