@@ -36,8 +36,16 @@ def fetch_random_chunks(
     target_resolution: Optional[float] = None,
     windows_selector=None,
     items=None,
+    chunk_batch: int = 0,
 ):
-    """Fetch random chunk-aligned Sentinel-2 time-series data as an xarray Dataset."""
+    """Fetch random chunk-aligned Sentinel-2 time-series data as an xarray Dataset.
+
+    ``chunk_batch`` > 0 returns a GENERATOR of datasets, each holding that many windows,
+    instead of one dataset holding all ``n_chunks``. Window selection is identical either
+    way -- only the read is split -- so results are unchanged. Use it whenever
+    n_chunks x n_scenes is large: the single-dataset path allocates
+    ``time x chunk x band x block_px x 4B``, linear in n_chunks.
+    """
 
     request = RandomChunkRequest(
         mgrs_tile=mgrs_tile,
@@ -62,6 +70,7 @@ def fetch_random_chunks(
         target_resolution=target_resolution,
         windows_selector=windows_selector,
         items=items,
+        chunk_batch=chunk_batch,
     )
     return fetch_random_chunks_for_request(request)
 
