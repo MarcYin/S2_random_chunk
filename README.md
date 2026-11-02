@@ -1,5 +1,9 @@
 # s2-random-chunk
 
+> **Archived on 2026-11-02.** This package is ported into the MarcYin/yield-platform monorepo (private) as
+> `yp.ingest.s2`: all 11 modules and the 6 tests, verbatim at 9ba5086. It is maintained there; this repository
+> stays readable but is no longer updated.
+
 Randomly sample internal Cloud Optimized GeoTIFF chunks from Sentinel-2 MGRS tiles and return a time-series `xarray.Dataset`.
 
 The package searches Sentinel-2 L2A STAC items from either Microsoft Planetary Computer or Element84 Earth Search, inspects the remote GeoTIFF block layout before sampling, chooses random block-aligned chunks, and fetches the selected windows in parallel with Rasterio/GDAL HTTP range reads.
